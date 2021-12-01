@@ -1,0 +1,1893 @@
+"use strict";
+(function (window) {
+    // for Harry animations via js
+    $.fn.extend({
+        animateCss: function (animation_name, global_context, callback) {
+            var animation_end = "webkitAnimationEnd mozAnimationEnd MSAnimationEnd oanimationend animationend";
+            var animated_class = "animated ";
+            animated_class += animation_name;
+            this.addClass(animated_class).one(animation_end, function () {
+                $(this).removeClass(animated_class);
+                callback(global_context);
+            });
+            return this;
+        },
+    });
+
+    var ChatChef = {
+        init: function (bot_id) {
+            if (!this.initialised) {
+                var that = this;
+                // initialising dynamic values
+                this.bot_id = bot_id;
+                this.user_id = $("#user_id").data()["name"];
+                this.user_name = $("#user_name").data()["name"] || "User";
+                this.bot_name = $("#bot_name").data()["name"];
+                this.bot_descr = $("#bot_description").data()["name"];
+                this.avatar_path = $("#bot_avatar").data()["name"];
+                this.bot_access_token = $("#bot_access_token").data()["name"];
+                this.bot_language = $("#bot_language").data()["name"];
+
+                this.reply_div_id = 1;
+                this.query_id = 1;
+
+                this.base_url = document.location.origin.concat("/chatchef/chatbot"); // nosemgrep
+
+                this.messaging_url = this.base_url + "/channel/web/" + this.bot_id + "/webhook/";
+
+                this.conversation_started = false; // used to handle the inital message from bot
+                this.intent = "none";
+                this.dialog = "initial";
+                this.data_dict = {};
+                this.session_id = this.generate_session_id();
+                this.is_dev = window.location.hostname === "127.0.0.1";
+                this.session_info_saved = false;
+                this.channel_name = "Web";
+                this.intent_utternace = {};
+
+                this.user_id_fetched = false;
+                this.time_delay_in_response = 1000; // 1 sec
+                this.user_location = helper.get_current_location();
+                this.intent_utterance = {};
+
+                // Voice recognition variables
+                this.voice_enabled = true;
+                this.is_voice_recognizing = false;
+                this.voice_transcript = "";
+                this.user_profile_pic = "";
+                this.input_chip_read = "";
+                this.speech_stack = [];
+                this.recommend_button_text = "";
+
+                this.mute_bot = false;
+
+                // counter for idle time msg
+                this.idle_time = 0;
+                // counter for incorrect response
+                this.incorrect_response_count = 0;
+                // append bot code
+                this.append_bot_body(function () {
+                    // dynamic variables
+                    that.bot_chat_box = $("#chatchef_wrap");
+                    that.bot_tool_tip = $("#chat_tooltip");
+                    that.bot_avatar = $("#chat_icon");
+                    that.bot_input_field = $("#chatchef_input_field");
+                    that.bot_send_button = $("#chatchef_input_button");
+                    that.bot_chat_history = $("#chatchef_chat_history");
+                    that.loader = $("#bot_loader");
+                    that.bot_mute_button = $("#chatchef_mute_button");
+                    that.bot_gender = "";
+                    // event bindings
+                    that.bind_events();
+                    that.fetch_bot_gender();
+                    that.fetch_custom_features();
+
+                    // optional capabilities
+                    that.enable_voice_input();
+                    that.enable_timeout();
+                });
+            }
+        },
+        generate_session_id: function () {
+            //// return uuid of form xxxxxxxxxx-xxxxxxxxxx
+            const crypto = window.msCrypto || window.crypto;
+            var array = new Uint32Array(1);
+            var uuid;
+            if (window.jscd["browser"] == "Microsoft Internet Explorer") {
+                var concat_array = new Uint32Array(1);
+                crypto.getRandomValues(array).toString();
+                crypto.getRandomValues(concat_array).toString();
+                uuid = array[0] + "-" + concat_array[0];
+            } else {
+                uuid = crypto.getRandomValues(array).toString() + "-" + crypto.getRandomValues(array).toString();
+            }
+            return uuid;
+        },
+        make_bot_draggable: function () {
+            this.is_dev && console.log("making draggable");
+            this.bot_chat_box.draggable({
+                scroll: false,
+                handle: "#chatchef-header",
+                containment: "window",
+            });
+        },
+        bind_events: function () {
+            var that = this;
+            this.is_dev && console.log("Binding all events");
+
+            // making empty speak to set the voice
+            this.speak("");
+
+            this.hide_loader();
+
+            this.bot_tool_tip.on("click", $.proxy(this.show_bot_interface, this));
+            this.bot_avatar.on("click", $.proxy(this.show_bot_interface, this));
+            this.bot_input_field.on("keyup", $.proxy(this.process_user_input, this));
+            this.bot_send_button.on("click", $.proxy(this.send_message_to_server, this));
+
+            $(document).on("click", ".confirm_intent_btn", function (event) {
+                $.proxy(that.confirm_intent, this, that, event)();
+            });
+            $(document).on("click", ".user_rating_btn", function (event) {
+                $.proxy(that.confirm_user_rating, this, that, event)();
+            });
+            $(document).on("click", ".optionbutton", function (event) {
+                $(this).parent().remove();
+
+                that.input_chip_read = this.value;
+                $.proxy(that.set_query, this, that, event)(this.value);
+            });
+            that.bot_chat_history.on("click", ".recommend-btn", function () {
+                $(".recommend-btn").attr("disabled", true);
+                var text = $(this).text();
+                that.recommend_button_text = text;
+                that.input_chip_read = that.intent_utterance[text].toString();
+                that.send_message_to_server();
+            });
+            this.bot_mute_button.on("click", function () {
+                that.mute_bot = !that.mute_bot;
+                if (that.mute_bot) {
+                    that.stop_speaking();
+                    that.bot_mute_button.removeClass("fa-volume-up");
+                    that.bot_mute_button.addClass("fa-volume-off");
+                    that.bot_mute_button.attr("src", "/chatchef/static/images/chatchef-bot/bot_input_volume_mute.png");
+                } else {
+                    that.speak();
+                    that.bot_mute_button.removeClass("fa-volume-off");
+                    that.bot_mute_button.addClass("fa-volume-up");
+                    that.bot_mute_button.attr("src", "/chatchef/static/images/chatchef-bot/bot_input_volume.png");
+                }
+                console.log(that.mute_bot);
+            });
+            $(document).on("click", ".sentiment-button", function () {
+                $(".sentiment-button").attr("disabled", true);
+                that.process_bot_reply({"answer": [{"response": "How can I help you?", "response_type": "simple"}]});
+                that.save_user_emotion(this.value, "Open");
+            });
+            $(document).on("click", ".confirm_continue_btn", function () {
+                $(".confirm_continue_btn").attr("disabled", true);
+                var data_status = $(this).attr("data-status");
+                if (data_status == "continue") {
+                    // do nothing
+                } else if (data_status == "exit") {
+                    var reply = {
+                        "answer": [
+                            {
+                                "response": "We value your feedback. Please leave us a review.",
+                                "response_type": "feedback_sentiments",
+                                "feedback_data": {"Bad": "Bad", "Ok": "Ok", "Good": "Good", "Great": "Great"},
+                            },
+                        ],
+                    };
+                    that.process_bot_reply(reply);
+                }
+                $(this).parent().parent().parent().remove();
+                that.enable_input();
+            });
+            $(document).on("click", ".sentiment_feedback_button", function () {
+                $(".sentiment_feedback_button").attr("disabled", true);
+                that.process_bot_reply({"answer": [{"response": "Thank you for your feedback!.", "response_type": "simple"}]});
+                that.save_user_emotion(this.value, "Close");
+            });
+        },
+        fetch_bot_gender: function () {
+            var that = this;
+            $.ajax({
+                url: that.base_url + "/fetchbotprofile",
+                type: "POST",
+                // contentType: "application/json; charset=utf-8",
+                // dataType: "json",
+                data: {username: that.user_name, botid: that.bot_id, bot_token: that.bot_access_token},
+                success: function (data) {
+                    console.log("Response:", data);
+                    that.bot_gender = data.response["bot_profile"]["gender"];
+                    console.log(that.bot_gender);
+                },
+                error: function (data) {
+                    if (data.status == 401) {
+                        console.log("Response:", data);
+                        helper.hide_loader();
+                        helper.show_toast("Error", "Your access token is expired. Kindly login again to continue", "error");
+                    }
+                },
+            });
+        },
+        fetch_custom_features: function () {
+            var that = this;
+            $.ajax({
+                url: that.base_url + "/fetchcustomfeatures",
+                type: "POST",
+                data: {botid: that.bot_id},
+                success: function (data) {
+                    console.log("Response: ", data);
+                    that.custom_header_switch = data.response["fetched_custom_features"][0];
+                    that.custom_mood_switch = data.response["fetched_custom_features"][1];
+                    that.custom_feedback_switch = data.response["fetched_custom_features"][2];
+                    that.custom_chat_header_bg = data.response["fetched_custom_features"][3];
+                    that.custom_chat_header_text = data.response["fetched_custom_features"][4];
+
+                    if (that.custom_header_switch == true && that.custom_chat_header_bg != null && that.custom_chat_header_text != null) {
+                        $("#chatchef_wrap #chatchef-header").css("background", that.custom_chat_header_bg);
+                        $("#chatchef_wrap #chatchef-header .chatchef-header-text").css("color", that.custom_chat_header_text);
+                    }
+                },
+                error: function (data) {
+                    if (data.status == 401) {
+                        console.log("Response: ", data);
+                        helper.hide_loader();
+                        helper.show_toast("Error", "Your access token is experied. Kindly login again to continue", "error");
+                    }
+                },
+            });
+        },
+        /**
+         * @description Create a new dom element and add classname, id if present
+         * @param {element} element name like div,span
+         * @param {classname} classname string || array
+         * @param {id} id string || array
+         * @support IE6+ Browsers
+         */
+        create_element: function (elem, classname, id) {
+            var element = document.createElement(elem);
+            if (classname) {
+                if (typeof classname === "string") {
+                    element.className += classname;
+                } else if (Array.isArray(classname)) {
+                    element.className += classname.join(" ");
+                }
+            }
+
+            if (id) {
+                if (typeof id === "string") {
+                    element.id = id;
+                } else if (Array.isArray(id)) {
+                    element.id = id.join(" ");
+                }
+            }
+
+            return element;
+        },
+        /**
+         * @description Create a text node
+         * @param {elem} text value
+         * @support IE6+ Browsers
+         */
+        create_text_node: function (elem) {
+            return document.createTextNode(elem);
+        },
+        /**
+         * @description Append child to parent element
+         * @param {parent} parent element
+         * @param {child} child element
+         * @support IE6+ Browsers
+         */
+        append_child: function (parent, child) {
+            parent.appendChild(child);
+        },
+        append_bot_body: function (callback) {
+            this.is_dev && console.log("Appending Bot Body");
+
+            // ChatChef Bot avatar elements
+            var chatchef_bot_avatar = this.create_element("div", "chatchef_bot_avatar", "chatchef_bot_avatar");
+            var chat_tooltip = this.create_element("div", "chat_tooltip", "chat_tooltip");
+            var bot_left_h5 = this.create_element("h5", "bot-text-left");
+            var bot_text_left = this.create_text_node("Talk to " + this.bot_name);
+            this.append_child(bot_left_h5, bot_text_left);
+            var bot_left_descr = this.create_element("p", ["bot-text-left", "bot-text-left-p"]);
+            var bot_text_left_descr = this.create_text_node(this.bot_descr);
+            this.append_child(bot_left_descr, bot_text_left_descr);
+            this.append_child(chat_tooltip, bot_left_h5);
+            this.append_child(chat_tooltip, bot_left_descr);
+            var chat_icon = this.create_element("div", "chat_icon", "chat_icon");
+            var bot_launcher_open_icon = this.create_element("div", "bot-launcher-open-icon");
+            this.append_child(chat_icon, bot_launcher_open_icon);
+            var bot_launcher_close_icon = this.create_element("div", "bot-launcher-close-icon");
+            this.append_child(chat_icon, bot_launcher_close_icon);
+            this.append_child(chatchef_bot_avatar, chat_tooltip);
+            this.append_child(chatchef_bot_avatar, chat_icon);
+
+            // ChatChef Bot wrap elements
+            var chatchef_wrap = this.create_element("div", ["dockable", "ui-resizable", "ui-draggable", "ui-draggable-handle", "left-side-align"], "chatchef_wrap");
+            var chatchef_header = this.create_element("div", null, "chatchef-header");
+            var chatchef_header_text = this.create_element("div", "chatchef-header-text");
+            var chatchef_header_text_value = this.create_text_node(this.bot_name);
+            this.append_child(chatchef_header_text, chatchef_header_text_value);
+            var chatchef_header_text_1 = this.create_element("div", ["chatchef-header-text", "bot-sub-text"]);
+            var chatchef_header_text_value_1 = this.create_text_node(this.bot_descr);
+            this.append_child(chatchef_header_text_1, chatchef_header_text_value_1);
+            this.append_child(chatchef_header, chatchef_header_text);
+            this.append_child(chatchef_header, chatchef_header_text_1);
+            var chatchef_body = this.create_element("div", null, "chatchef-body");
+            var chatchef_chat_history = this.create_element("div", null, "chatchef_chat_history");
+            var bot_loader = this.create_element("div", "bot_loader", "bot_loader");
+            var bot_loader_fallback = this.create_element("div", "bot_loader--fallback");
+            var bot_loader_fallback_text = this.create_text_node("Loading...");
+            this.append_child(bot_loader_fallback, bot_loader_fallback_text);
+            this.append_child(bot_loader, bot_loader_fallback);
+            this.append_child(chatchef_chat_history, bot_loader);
+            this.append_child(chatchef_body, chatchef_chat_history);
+            var chatchef_footer = this.create_element("div", null, "chatchef-footer");
+            var chatchef_input_wrap = this.create_element("div", "chatchef-input-wrap");
+            var chatchef_input = this.create_element("div", "chatchef-input");
+            var chatchef_input_field = this.create_element("input", null, "chatchef_input_field");
+            chatchef_input_field.placeholder = "Type your question here.";
+            chatchef_input_field.name = "chatchef_input_field";
+            chatchef_input_field.label = "Type your question here.";
+            chatchef_input_field.autocomplete = "off";
+            this.append_child(chatchef_input, chatchef_input_field);
+            this.append_child(chatchef_input_wrap, chatchef_input);
+            var chatchef_mute_button = this.create_element("img", "fa-volume-up", "chatchef_mute_button");
+            chatchef_mute_button.src = "/chatchef/static/images/chatchef-bot/bot_input_volume.png";
+            var chatchef_input_button = this.create_element("img", "fa-microphone", "chatchef_input_button");
+            chatchef_input_button.src = "/chatchef/static/images/chatchef-bot/bot_input_mic.png";
+            this.append_child(chatchef_footer, chatchef_input_wrap);
+            this.append_child(chatchef_footer, chatchef_mute_button);
+            this.append_child(chatchef_footer, chatchef_input_button);
+            this.append_child(chatchef_wrap, chatchef_header);
+            this.append_child(chatchef_wrap, chatchef_body);
+            this.append_child(chatchef_wrap, chatchef_footer);
+
+            document.body.appendChild(chatchef_bot_avatar);
+            document.body.appendChild(chatchef_wrap);
+
+            callback();
+        },
+        enable_voice_input: function () {
+            this.is_dev && console.log("Enabling voice input");
+            if ("webkitSpeechRecognition" in window) {
+                var that = this;
+                this.voice_enabled = true;
+                this.bot_send_button.removeClass("fa-paper-plane");
+                this.bot_send_button.addClass("fa-microphone");
+
+                this.bot_send_button.prop("onclick", null).off("click");
+                this.bot_send_button.on("click", $.proxy(this.capture_voice, this));
+                // eslint-disable-next-line no-undef
+                this.recognition = new webkitSpeechRecognition();
+                this.recognition.continuous = false;
+                this.recognition.interimResults = false;
+                this.recognition.maxAlternatives = 5;
+
+                this.recognition.onstart = function () {
+                    that.is_dev && console.log("starting to listen to voice");
+                    that.bot_send_button.addClass("faa-pulse animated");
+                    that.is_voice_recognizing = true;
+                };
+                this.recognition.onspeechstart = function () {
+                    that.is_dev && console.log("in onspeechstart of Voice Recognition");
+                    setTimeout(function () {
+                        that.recognition.stop();
+                    }, 8000);
+                };
+                this.recognition.onresult = function (event) {
+                    that.is_dev && console.log("in onresult of Voice Recognition");
+                    var first_char = /\S/;
+                    function capitalize(s) {
+                        return s.replace(first_char, function (m) {
+                            return m.toUpperCase();
+                        });
+                    }
+
+                    var interim_transcript = "";
+                    if (typeof event.results == "undefined") {
+                        that.recognition.onend = null;
+                        that.recognition.stop();
+                        return;
+                    }
+                    for (var i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            that.voice_transcript += event.results[i][0].transcript;
+                        } else {
+                            // eslint-disable-next-line no-unused-vars
+                            interim_transcript += event.results[i][0].transcript;
+                        }
+                    }
+                    that.voice_transcript = capitalize(that.voice_transcript);
+                };
+                this.recognition.onend = function () {
+                    that.is_dev && console.log("ending voice recognition");
+                    that.bot_send_button.removeClass("faa-pulse animated");
+                    that.is_voice_recognizing = false;
+                    that.is_dev && console.log("Output from voice recognition -> ", that.voice_transcript);
+                    that.send_message_to_server();
+                };
+            }
+        },
+        capture_voice: function () {
+            this.is_dev && console.log("Capturing Voice");
+            this.stop_speaking();
+
+            if (this.is_voice_recognizing) {
+                this.recognition.stop();
+                return;
+            }
+            this.voice_transcript = "";
+            this.recognition.lang = "en-US";
+            this.recognition.start();
+        },
+        stop_speaking: function () {
+            if (window.chrome) {
+                window.speechSynthesis.cancel();
+            }
+            this.speech_stack = [];
+            console.log("speech_stack is cleared now.");
+        },
+        show_bot_interface: function () {
+            this.is_dev && console.log("Showing the bot interface");
+            this.hide_tool_tip(this);
+            if (!this.conversation_started) {
+                // user is opening UI for first time
+                clearInterval(this.idleInterval);
+                this.initiate_conversation();
+            }
+
+            this.bot_avatar.toggleClass("bot-open");
+            this.bot_chat_box.fadeToggle();
+            this.bot_input_field.focus();
+        },
+        show_bot_avatar: function () {
+            this.is_dev && console.log("Showing the bot avatar");
+            this.bot_chat_box.css("display", "none");
+            this.bot_avatar.removeClass("bot-open");
+        },
+        scroll_chat_to_bottom: function () {
+            this.is_dev && console.log("Scrolling chat to bottom");
+            this.bot_chat_history.animate({scrollTop: this.bot_chat_history[0].scrollHeight}, 420);
+        },
+        hide_loader: function () {
+            this.is_dev && console.log("Hiding Loader");
+            this.loader.hide();
+        },
+        show_loader: function () {
+            this.is_dev && console.log("Showing Loader");
+            this.loader.show();
+        },
+        // eslint-disable-next-line no-unused-vars
+        minimize_bot: function (event) {
+            this.is_dev && console.log("Minimizing Bot");
+            this.show_bot_avatar();
+        },
+        process_user_input: function (event) {
+            this.is_dev && console.log("Processing user input");
+            if (event.keyCode == 13) {
+                $.proxy(this.send_message_to_server, this)();
+            } else {
+                $.proxy(this.stop_speaking, this)();
+                if (this.bot_input_field.val().length > 0) $.proxy(this.set_send_icon, this)();
+                else $.proxy(this.set_mic_icon, this)();
+            }
+        },
+        set_mic_icon: function () {
+            if (this.bot_send_button.hasClass("fa-paper-plane")) {
+                this.bot_send_button.removeClass("fa-paper-plane");
+                this.bot_send_button.addClass("fa-microphone");
+
+                this.bot_send_button.prop("onclick", null).off("click");
+                this.bot_send_button.on("click", $.proxy(this.capture_voice, this));
+            }
+        },
+        set_send_icon: function () {
+            if (this.bot_send_button.hasClass("fa-microphone")) {
+                this.bot_send_button.addClass("fa-paper-plane");
+                this.bot_send_button.removeClass("fa-microphone faa-pulse animated");
+
+                this.bot_send_button.prop("onclick", null).off("click");
+                this.bot_send_button.on("click", $.proxy(this.send_message_to_server, this));
+            }
+        },
+        save_session_info: function () {
+            this.session_info_saved = true;
+            var that = this;
+            $.ajax({
+                url: this.base_url + "/sessionsave",
+                type: "POST",
+                contentType: "application/json; charset=utf-8",
+                dataType: "json",
+                data: JSON.stringify({
+                    session_id: that.session_id,
+                    bot_id: that.bot_id,
+                    user_name: that.user_name,
+                    browser_info: window.jscd,
+                    location: that.user_location,
+                    channel: that.channel_name,
+                }),
+                success: function (data) {
+                    if (data.response["status"]) {
+                        console.info("session saved successfully");
+                    } else {
+                        console.error("Error occurred on saving session.");
+                    }
+                },
+                error: function (data) {
+                    console.error("Error occurred on saving session.");
+                    if (data.status == 401) {
+                        console.info(data);
+                        helper.hide_loader();
+                        helper.show_toast("Error", "Your access token is expired. Kindly login again to continue", "error");
+                    }
+                },
+            });
+        },
+        // send_message_to_server: function () {
+        //     this.is_dev && console.log("sending message to server");
+
+        //     var query = "";
+
+        //     if (this.input_chip_read == "") {
+        //         // eslint-disable-next-line no-unused-vars
+        //         query = this.voice_transcript || this.bot_input_field.val();
+        //     } else {
+        //         query = this.input_chip_read;
+        //         this.input_chip_read = "";
+        //     }
+        //     if (query === "") return true;
+
+        //     var that = this;
+        //     this.voice_transcript = "";
+        //     this.show_user_query(query);
+        //     this.bot_input_field.val("");
+        //     this.show_loader();
+        //     if (this.bot_send_button.hasClass("fa-paper-plane"))
+        //         this.bot_send_button.animateCss("fadeOut", this, function (global_context) {
+        //             global_context.set_mic_icon();
+        //         });
+        //     if (!this.session_info_saved) {
+        //         console.log("saving user's session ");
+        //         this.save_session_info();
+        //     }
+
+        //     $.ajax({
+        //         url: that.messaging_url,
+        //         type: "POST",
+        //         contentType: "application/json; charset=utf-8",
+        //         dataType: "json",
+        //         data: JSON.stringify({
+        //             user_id: that.user_id,
+        //             session_id: that.session_id,
+        //             botid: that.bot_id,
+        //             query: query,
+        //             dialog: that.dialog,
+        //             intent: that.intent,
+        //             query_id: that.query_id,
+        //         }),
+        //         success: function (data) {
+        //             console.log("Response:", data);
+
+        //             that.hide_loader();
+
+        //             if (data.response["answer"].length > 1 && that.custom_feedback_switch == true) {
+        //                 if (data.response["answer"][1]["response_type"] == "simple_confused") {
+        //                     that.process_bot_reply(data.response);
+        //                 } else {
+        //                     var feedback = {"response": "Is there anything else I can help you with?", "response_type": "ask_help"};
+        //                     data.response["answer"].push(feedback);
+        //                     that.process_bot_reply(data.response);
+        //                 }
+        //             } else {
+        //                 if (
+        //                     data.response["answer"][0]["response_type"] == "simple_confused" ||
+        //                     data.response["answer"][0]["response"] == "Sorry, I could not understand you. Can you rephrase the question?"
+        //                 ) {
+        //                     that.process_bot_reply(data.response);
+        //                 } else if (data.response["answer"][0]["response"] == "Hi, how can I  help you?") {
+        //                     that.process_bot_reply(data.response);
+        //                 } else if (data.response["feedback"] == false) {
+        //                     that.process_bot_reply(data.response);
+        //                 } else {
+        //                     that.process_bot_reply(data.response);
+        //                     if (that.custom_feedback_switch == true) {
+        //                         feedback = [{"response": "Is there anything else I can help you with?", "response_type": "ask_help"}];
+        //                         that.process_bot_reply({"answer": feedback});
+        //                     }
+        //                 }
+        //             }
+        //         },
+        //         error: function (data) {
+        //             that.hide_loader();
+        //             if (data.status == 401) {
+        //                 console.log("Response:", data);
+        //                 helper.hide_loader();
+        //                 helper.show_toast("Error", "Your access token is expired. Kindly login again to continue", "error");
+        //             }
+        //         },
+        //     });
+        // },
+        send_message_to_server: function () {
+            this.is_dev && console.log("sending message to server");
+
+            var query = "";
+
+            if (this.input_chip_read == "") {
+                // eslint-disable-next-line no-unused-vars
+                query = this.voice_transcript || this.bot_input_field.val();
+            } else {
+                query = this.input_chip_read;
+                this.input_chip_read = "";
+            }
+            if (query === "") return true;
+
+            var that = this;
+            this.voice_transcript = "";
+            this.show_user_query(this.recommend_button_text || query);
+            this.bot_input_field.val("");
+            this.show_loader();
+            if (this.bot_send_button.hasClass("fa-paper-plane"))
+                this.bot_send_button.animateCss("fadeOut", this, function (global_context) {
+                    global_context.set_mic_icon();
+                });
+            if (!this.session_info_saved) {
+                console.log("saving user's session ");
+                this.save_session_info();
+            }
+
+            $.ajax({
+                url: that.messaging_url,
+                type: "POST",
+                contentType: "application/json; charset=utf-8",
+                dataType: "json",
+                data: JSON.stringify({
+                    user_id: that.user_id,
+                    session_id: that.session_id,
+                    botid: that.bot_id,
+                    query: query,
+                    dialog: that.dialog,
+                    intent: that.intent,
+                    query_id: that.query_id,
+                }),
+                success: function (data) {
+                    console.log("Response:", data);
+                    that.hide_loader();
+                    that.process_bot_reply(data.response);
+                },
+                error: function (data) {
+                    that.hide_loader();
+                    if (data.status == 401) {
+                        console.log("Response:", data);
+                        helper.hide_loader();
+                        helper.show_toast("Error", "Your access token is expired. Kindly login again to continue", "error");
+                    }
+                },
+            });
+        },
+        initiate_conversation: function () {
+            this.is_dev && console.log("Initiating Conversation");
+            this.conversation_started = true;
+            var reply = [];
+            var replies = [];
+            if (this.bot_id == "33d07a0a-c3fe-4a8c-9d95-51af69eaa5c8") {
+                reply = [
+                    "{{GREETING}}, I'm Stella, your AI Personal Assistant.",
+                    "Currently I am trained with helping you to take a Covid-19 Self-Assessment. <br><br>Please Note -" +
+                        "The Self-Assessment is based on Centers for Disease Control and Prevention (CDC) guidelines and Mayo Clinic.",
+                ];
+                // var replies = [];
+                for (let reply_ of reply) {
+                    replies.push({"response": reply_, "response_type": "simple", "speech": reply_.replace(/<li>|<ul class='standard_msg'>|<\/li>|<\/ul>/gi, " ")});
+                }
+                replies.push({
+                    "response": "Please choose an appropriate option:",
+                    "response_type": "chips",
+                    "chipset_data": {"Self Assessment for Covid-19": "Self Assessment for Covid-19", "Not Now": "Not Now"},
+                });
+                this.process_bot_reply({"answer": replies});
+            } else if (this.bot_language == "French") {
+                reply = "{{GREETING}}, " + this.user_name + ", I'm " + this.bot_name + ", votre assistant virtuel. Comment puis-je t'aider?";
+                this.process_bot_reply({"answer": [{"response": reply, "response_type": "simple", "speech": reply.replace(/<li>|<ul class='standard_msg'>|<\/li>|<\/ul>/gi, " ")}]});
+            } else if (this.bot_id == "dda943c9-5d3d-4774-8a03-f84ca6ec2202") {
+                reply = [
+                    "{{GREETING}}, I'm Arya, Your virtual HR assistant.",
+                ];
+                replies.push({"response": reply[0], "response_type": "simple", "speech": reply[0].replace(/<li>|<ul class='standard_msg'>|<\/li>|<\/ul>/gi, " ")});
+                replies.push({
+                    "response": "How is your mood today ?",
+                    "response_type": "sentiments",
+                    "sentiment_data": {"Happy": "Happy", "Sad": "Sad", "Bad": "Bad"},
+                });
+                this.process_bot_reply({"answer": replies});
+                // this.process_bot_reply({"answer": [{"response": reply, "response_type": "simple", "speech": reply.replace(/<li>|<ul class='standard_msg'>|<\/li>|<\/ul>/gi, " ")}]});
+
+            } else if (this.bot_id == "d33d29b1-a91a-4f92-aca7-927548f39adf") {
+                reply = [
+                    "{{GREETING}}, I am HANA your Philippines HR assistant.",
+                ];
+                replies.push({"response": reply[0], "response_type": "simple", "speech": reply[0].replace(/<li>|<ul class='standard_msg'>|<\/li>|<\/ul>/gi, " ")});
+                replies.push({
+                    "response": "How is your mood today ?",
+                    "response_type": "sentiments",
+                    "sentiment_data": {"Happy": "Happy", "Sad": "Sad", "Bad": "Bad"},
+                });
+                this.process_bot_reply({"answer": replies});
+                // this.process_bot_reply({"answer": [{"response": reply, "response_type": "simple", "speech": reply.replace(/<li>|<ul class='standard_msg'>|<\/li>|<\/ul>/gi, " ")}]});
+
+            } else {
+                var that = this;
+                that.show_loader();
+                that.intent = "Welcome Intent";
+                $.ajax({
+                    url: that.messaging_url,
+                    type: "POST",
+                    contentType: "application/json; charset=utf-8",
+                    dataType: "json",
+                    data: JSON.stringify({
+                        user_id: that.user_id,
+                        session_id: that.session_id,
+                        botid: that.bot_id,
+                        query: "Hello",
+                        dialog: that.dialog,
+                        intent: "Welcome Intent",
+                        query_id: that.query_id,
+                    }),
+                    success: function (data) {
+                        console.log("Response:", data);
+                        that.hide_loader();
+                        if (that.custom_mood_switch == true) {
+                            data.response["answer"].push({
+                                "response": "How is your mood today ?",
+                                "response_type": "sentiments",
+                                "sentiment_data": {"Happy": "Happy", "Sad": "Sad", "Bad": "Bad"},
+                            });
+                        }
+                        that.process_bot_reply(data.response);
+                        
+                    },
+                    error: function (data) {
+                        that.hide_loader();
+                        if (data.status == 401) {
+                            console.log("Response:", data);
+                            helper.hide_loader();
+                            helper.show_toast("Error", "Your access token is expired. Kindly login again to continue", "error");
+                        }
+                    },
+                });
+            }
+        },
+        sanitize_html: function (text) {
+            this.is_dev && console.log("sanitizing user text");
+            var re = /<script[\s\S]*?>[\s\S]*?<\/script>/gi;
+            var tags_mapping = {
+                // for preventing xss attacks
+                "&": "&amp;",
+                "<": "&lt;",
+                ">": "&gt;",
+                '"': "&quot;",
+                "'": "&#39;",
+                "/": "&#2F;",
+                "`": "&#60;",
+                "=": "&#3D;",
+            };
+            if (text == "" || text == " " || text == null) {
+                console.log("inside empty text check");
+                return text;
+            } else if (text.match(re) || text.indexOf("&lt;script") > -1) {
+                return text.replace(/[&<>"']/g, function (e) {
+                    return tags_mapping[e];
+                });
+            } else {
+                return text;
+            }
+        },
+        show_user_query: function (query) {
+            this.is_dev && console.log("Showing user query");
+            this.reply_div_id++;
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+            var user_avatar = this.create_element("img", ["ui-user-avatar", "user-avatar"]);
+            user_avatar.src = "/chatchef/static/images/avatars/user_avatar.png";
+            var user_text = this.create_element("div", "user-text");
+            var p = this.create_element("p");
+            var p_text = this.create_text_node(this.sanitize_html(query));
+            this.append_child(p, p_text);
+            var span = this.create_element("span");
+            var span_text = this.create_text_node(formated_date_time);
+            this.append_child(span, span_text);
+            this.append_child(user_text, p);
+            this.append_child(user_text, span);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            // incrementing query id
+            this.query_id++;
+            this.scroll_chat_to_bottom();
+        },
+        confirm_user_rating: function (global_context, event) {
+            if (global_context.is_dev) console.log("Handling the user_rating");
+            event.preventDefault();
+            var data_rating = $(this).attr("data-rating");
+            var data_query_id = $(this).attr("data-query-id");
+
+            if (data_rating == "LIKE") {
+                this.src = "/chatchef/static/images/chatchef-bot/bot_chat_like_filled.png";
+                $(this).siblings(this, "/chatchef/static/images/chatchef-bot/bot_chat_dislike.png");
+            } else {
+                this.src = "/chatchef/static/images/chatchef-bot/bot_chat_dislike_filled.png";
+                $(this).siblings(this, "/chatchef/static/images/chatchef-bot/bot_chat_like.png");
+            }
+            var setuserrating_url = global_context.base_url + "/setuserrating"; // nosemgrep
+            $.ajax({
+                url: setuserrating_url,
+                type: "POST",
+                contentType: "application/json; charset=utf-8",
+                dataType: "json",
+                data: JSON.stringify({botid: global_context.bot_id, session_id: global_context.session_id, query_id: data_query_id, query_rating: data_rating}),
+                success: function (data) {
+                    console.info(data);
+                    // do nothing
+                },
+                error: function (data) {
+                    // do nothing
+                    if (data.status == 401) {
+                        console.log("Response:", data);
+                        helper.hide_loader();
+                        helper.show_toast("Error", "Your access token is expired. Kindly login again to continue", "error");
+                    }
+                },
+            });
+        },
+        confirm_intent: function (global_context, event) {
+            if (global_context.is_dev) console.log("Handling the actions");
+            event.preventDefault();
+            var data_status = $(this).attr("data-status");
+            $(this).closest(".chat-input").hide();
+            global_context.enable_input();
+
+            global_context.input_chip_read = data_status;
+            global_context.send_message_to_server();
+        },
+        process_bot_reply: function (data) {
+            this.is_dev && console.log("Processing Bot Reply", data);
+            var that = this;
+            var time = 1;
+            var view_type = "without_icon";
+            var default_speak = true;
+            $.each(data.answer, function (index, item) {
+                setTimeout(function () {
+                    if (index == data.answer.length - 1) {
+                        view_type = "with_icon";
+                    }
+                    if (item.response_type == "simple") {
+                        that.show_simple_bot_reply(that.synthesize_reply(item.response), that.query_id, view_type, data.feedback);
+                        !that.is_dev && that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "simple_confused") {
+                        that.show_confused_bot_reply(item, that.query_id, view_type, data.feedback);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "chips") {
+                        that.show_option_chips(item, that.query_id, view_type, data.feedback);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "simple_url") {
+                        that.show_url_reply(item, that.query_id, view_type, data.feedback);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "simple_image") {
+                        that.show_image_reply(item, view_type, data.query_id);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "video") {
+                        that.show_video_reply(item, view_type, data.query_id);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "card") {
+                        that.show_card_reply(item, view_type, data.query_id);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "recommendation") {
+                        that.intent_utterance = item.intents_utterance[0];
+                        that.show_recommended_intents(that.intent_utterance, view_type, item.response);
+                    } else if (item.response_type == "sentiments") {
+                        that.show_option_sentiments(item, item.query_id, view_type);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "ask_help") {
+                        that.ask_for_help(item, that.query_id);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    } else if (item.response_type == "feedback_sentiments") {
+                        that.show_feedback_sentiments(item, item.query_id, view_type);
+                        that.validate_speak(that.synthesize_speech(item.response), default_speak);
+                    }
+                    if (index == 0) {
+                        default_speak = false;
+                    }
+                }, time);
+                time += that.time_delay_in_response;
+            });
+        },
+        show_confused_bot_reply: function (item, query_id, view_type, feedback) {
+            this.is_dev && console.log("show_simple_bot_reply");
+            this.reply_div_id++;
+            this.disable_input();
+            this.hide_loader();
+
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+            var user_avatar = this.create_element("img", ["ui-chatchef-avatar", "chatchef-avatar"]);
+            user_avatar.src = this.avatar_path;
+            var user_text = this.create_element("div", "chatchef-text");
+            var div = this.create_element("div");
+            var div_text = this.create_text_node(item.response);
+            this.append_child(div, div_text);
+            var confirm_intent_div = this.create_element("div", "confirm_intent_div");
+            var button = this.create_element("button", ["confirm_intent_btn", "bot-btn-success"]);
+            button.type = "button";
+            button.setAttribute("data-status", "yes");
+            button.setAttribute("data-query-id", query_id);
+            button.setAttribute("data-text", this.synthesize_reply(item.response));
+            button.setAttribute("data-speech", item.speech);
+            var button_text = this.create_text_node("Yes");
+            this.append_child(button, button_text);
+            var button_1 = this.create_element("button", ["confirm_intent_btn", "bot-btn-danger"]);
+            button_1.setAttribute("data-status", "no");
+            button_1.setAttribute("data-query-id", query_id);
+            var button_text_1 = this.create_text_node("No");
+            this.append_child(button_1, button_text_1);
+            this.append_child(confirm_intent_div, button);
+            this.append_child(confirm_intent_div, button_1);
+            this.append_child(div, confirm_intent_div);
+            this.append_child(user_text, div);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+
+            if (feedback) {
+                var rating_container = this.create_element("div", "rating_container");
+                var user_like_img = this.create_element("img", ["fa", "fa-thumbs-o-up", "user_rating_btn"]);
+                user_like_img.src = "/chatchef/static/images/chatchef-bot/bot_chat_like.png";
+                user_like_img.setAttribute("data-query-id", query_id);
+                user_like_img.setAttribute("data-rating", "LIKE");
+                user_like_img.setAttribute("aria-hidden", "true");
+                var user_dislike_img = this.create_element("img", ["fa", "fa-thumbs-o-up", "user_rating_btn"]);
+                user_dislike_img.src = "/chatchef/static/images/chatchef-bot/bot_chat_dislike.png";
+                user_dislike_img.setAttribute("data-query-id", query_id);
+                user_dislike_img.setAttribute("data-rating", "DISLIKE");
+                user_dislike_img.setAttribute("aria-hidden", "true");
+                this.append_child(rating_container, user_like_img);
+                this.append_child(rating_container, user_dislike_img);
+                this.append_child(reply_html, rating_container);
+            }
+            this.is_dev && console.log(reply_html);
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        show_simple_bot_reply: function (reply, query_id, view_type, feedback) {
+            this.is_dev && console.log("show_simple_bot_reply");
+            this.reply_div_id++;
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+            this.hide_loader();
+
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+            var user_avatar = this.create_element("img", ["ui-chatchef-avatar", "chatchef-avatar"]);
+            if (view_type !== "with_icon") {
+                user_avatar.className += " invisible";
+            }
+            user_avatar.src = this.avatar_path;
+            var user_text = this.create_element("div", "chatchef-text");
+            var p = this.create_element("p");
+            var p_text = this.create_text_node(reply);
+            this.append_child(p, p_text);
+            // var span = this.create_element("span");
+            var span = this.create_element("span", "date-time-span");
+            var span_text = this.create_text_node(formated_date_time);
+            this.append_child(span, span_text);
+            this.append_child(user_text, p);
+            this.append_child(user_text, span);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+            if (feedback && view_type === "with_icon") {
+                var rating_container = this.create_element("div", "rating_container");
+                var user_like_img = this.create_element("img", ["fa", "fa-thumbs-o-up", "user_rating_btn"]);
+                user_like_img.src = "/chatchef/static/images/chatchef-bot/bot_chat_like.png";
+                user_like_img.setAttribute("data-query-id", query_id);
+                user_like_img.setAttribute("data-rating", "LIKE");
+                user_like_img.setAttribute("aria-hidden", "true");
+                var user_dislike_img = this.create_element("img", ["fa", "fa-thumbs-o-up", "user_rating_btn"]);
+                user_dislike_img.src = "/chatchef/static/images/chatchef-bot/bot_chat_dislike.png";
+                user_dislike_img.setAttribute("data-query-id", query_id);
+                user_dislike_img.setAttribute("data-rating", "DISLIKE");
+                user_dislike_img.setAttribute("aria-hidden", "true");
+                this.append_child(rating_container, user_like_img);
+                this.append_child(rating_container, user_dislike_img);
+                this.append_child(reply_html, rating_container);
+            }
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        // eslint-disable-next-line no-unused-vars
+        show_url_reply: function (item, query_id, view_type, feedback) {
+            this.reply_div_id++;
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+            this.hide_loader();
+
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+
+            var user_avatar = this.create_element("img", ["ui-chatchef-avatar", "chatchef-avatar"]);
+            if (view_type !== "with_icon") {
+                user_avatar.className += " invisible";
+            }
+            user_avatar.src = this.avatar_path;
+            var user_text = this.create_element("div", "chatchef-text");
+            var p = this.create_element("p");
+            var p_text = this.create_text_node(item.response);
+            this.append_child(p, p_text);
+            var div = this.create_element("div", "chatchef-url");
+            var a = this.create_element("a");
+            a.href = item.url;
+            a.target = "_blank";
+            var a_text;
+            if (item.title) {
+                a_text = this.create_text_node(item.title);
+            } else {
+                a_text = this.create_text_node(item.url);
+            }
+            this.append_child(a, a_text);
+            // var span = this.create_element("span");
+            var span = this.create_element("span", "date-time-span");
+            var span_text = this.create_text_node(formated_date_time);
+            this.append_child(span, span_text);
+            this.append_child(user_text, p);
+            this.append_child(div, a);
+            this.append_child(user_text, div);
+            this.append_child(user_text, span);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        // eslint-disable-next-line no-unused-vars
+        show_option_chips: function (reply, query_id, view_type, feedback) {
+            console.log("show_option_chips");
+            this.reply_div_id++;
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+
+            this.hide_loader();
+            var chips_vals = reply["chipset_data"];
+
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+
+            var user_avatar = this.create_element("img", ["ui-chatchef-avatar", "chatchef-avatar"]);
+            if (view_type !== "with_icon") {
+                user_avatar.className += " invisible";
+            }
+            user_avatar.src = this.avatar_path;
+            var user_text = this.create_element("div", "chatchef-text");
+            var p = this.create_element("p");
+            var p_text = this.create_text_node(reply.response);
+            this.append_child(p, p_text);
+            // var span = this.create_element("span");
+            var span = this.create_element("span", "date-time-span");
+            var span_text = this.create_text_node(formated_date_time);
+            this.append_child(span, span_text);
+            this.append_child(user_text, p);
+            this.append_child(user_text, span);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+            var chips_div = this.create_element("div", ["chips_div", "text-center"]);
+            chips_div.style.textAlign = "center";
+            for (var key in chips_vals) {
+                console.log(key);
+                var button = this.create_element("button", ["optionselector", "optionbutton"], "key");
+                button.value = key;
+                var button_text = this.create_text_node(chips_vals[key]);
+                this.append_child(button, button_text);
+                this.append_child(chips_div, button);
+            }
+            this.append_child(reply_html, chips_div);
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        validate_speak: function (msg, init_speak) {
+            if (init_speak === undefined) {
+                init_speak = false;
+            }
+            var that = this;
+            console.log("validating length of audio msg");
+            msg = msg.replace(/<br>|<b>|<i>|<\/b>|<\/i>/g, " ");
+
+            var words = msg.split(" ");
+            var total_words = words.length;
+            console.log("total words in the response: ", total_words);
+
+            var updated_msgs = [];
+
+            var words_covered = 0;
+            var temp = "";
+            for (var i = 0; i < total_words; i++) {
+                temp += words[i] + " ";
+                words_covered += 1;
+
+                if (words_covered > 32 || i == total_words - 1) {
+                    updated_msgs.push(temp);
+                    temp = "";
+                    words_covered = 0;
+                }
+            }
+
+            console.log(that.speech_stack);
+            that.speech_stack = that.speech_stack.concat(updated_msgs);
+            console.log(that.speech_stack);
+            if (init_speak) {
+                that.initiate_speak_module();
+            }
+        },
+        initiate_speak_module: function () {
+            var that = this;
+            if (that.speech_stack.length == 0) {
+                console.log("voice implemented successfully");
+                return;
+            }
+            var msg = that.speech_stack.shift();
+            that.speak(msg);
+        },
+        speak: function (msg) {
+            var that = this;
+            if (that.mute_bot == false) {
+                try {
+                    console.log("speaking ", msg);
+
+                    console.log(that.bot_gender);
+                    msg = msg.replace(/<br>|<b>|<i>|<\/b>|<\/i>/g, " ");
+                    msg = new SpeechSynthesisUtterance(msg);
+                    var voices = window.speechSynthesis.getVoices();
+                    if (that.bot_gender == "female") {
+                        msg.voice = voices.filter(function (voice) {
+                            return voice.name == "Google UK English Female";
+                        })[0];
+                    } else {
+                        msg.voice = voices.filter(function (voice) {
+                            return voice.name == "Google UK English Male";
+                        })[0];
+                    }
+                    window.speechSynthesis.speak(msg);
+
+                    msg.onend = function () {
+                        console.log("ChatChef Speak Completed");
+                        that.initiate_speak_module();
+                    };
+                    console.log("Speaking module here ending");
+                } catch (e) {
+                    console.log("Error in Speech Module");
+                }
+            }
+        },
+        synthesize_reply: function (reply) {
+            this.is_dev && console.log("synthesizing reply", reply);
+            var that = this;
+            reply = reply.replace("{{BOTNAME}}", this.bot_name);
+            reply = reply.replace("{{USERNAME}}", this.user_name);
+
+            let greets = that.language_based_greet();
+            var greeting;
+            if (new Date().getHours() > 11) {
+                greeting = new Date().getHours() >= 16 ? greets[2] : greets[1];
+            } else {
+                greeting = greets[0];
+            }
+            reply = reply.replace("{{GREETING}}", greeting);
+            return reply;
+        },
+        synthesize_speech: function (reply) {
+            var that = this;
+            reply = reply.replace("{{BOTNAME}}", this.bot_name);
+            reply = reply.replace("{{USERNAME}}", this.user_name);
+
+            let greets = that.language_based_greet();
+            var greeting;
+            if (new Date().getHours() > 11) {
+                greeting = new Date().getHours() >= 16 ? greets[2] : greets[1];
+            } else {
+                greeting = greets[0];
+            }
+            reply = reply.replace("{{GREETING}}", greeting).toLowerCase().replace("<br>", "");
+            return reply;
+        },
+        disable_input: function () {
+            this.bot_input_field.prop("disabled", true);
+        },
+        enable_input: function () {
+            this.bot_input_field.prop("disabled", false);
+        },
+        enable_timeout: function () {
+            this.is_dev && console.log("In timeout");
+
+            //For Timeout functionality
+            var that = this;
+            this.idleInterval = setInterval($.proxy(that.timer_increment, this, that), 1000); // 1 second
+        },
+        show_tool_tip: function (bot_context) {
+            bot_context.bot_tool_tip.show();
+            bot_context.bot_tool_tip.addClass("animated bounce");
+        },
+        hide_tool_tip: function (bot_context) {
+            bot_context.bot_tool_tip.addClass("animated bounceOut");
+        },
+        timer_increment: function (bot_context) {
+            bot_context.is_dev && console.log("In timer_increment");
+            // eslint-disable-next-line no-unused-vars
+            bot_context.idle_time = bot_context.idle_time + 1;
+            bot_context.is_dev && console.log(bot_context.idle_time);
+            if (bot_context.idle_time == 5) {
+                bot_context.show_tool_tip(bot_context);
+            } else if (bot_context.idle_time == 10) {
+                bot_context.hide_tool_tip(bot_context);
+                bot_context.idle_time = 0;
+                clearInterval(bot_context.idleInterval);
+            }
+        },
+        set_query: function (global_context, event, value) {
+            console.log(value);
+            global_context.send_message_to_server();
+        },
+        // eslint-disable-next-line no-unused-vars
+        show_image_reply: function (item, view_type, query_id) {
+            console.log("show_image_reply");
+            this.reply_div_id++;
+
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+            var user_avatar = this.create_element("img", ["ui-chatchef-avatar", "chatchef-avatar"]);
+            if (view_type !== "with_icon") {
+                user_avatar.className += " invisible";
+            }
+            user_avatar.src = this.avatar_path;
+            var user_text = this.create_element("div", "chatchef-text");
+            var p = this.create_element("p");
+            var p_text = this.create_text_node(item.response);
+            this.append_child(p, p_text);
+            var a = this.create_element("a", "chatchef-image", "thumbnail_img_" + this.reply_div_id);
+            var img = this.create_element("img", null, item.imagename);
+            img.src = item.imagepath;
+            img.target = "_blank";
+            this.append_child(a, img);
+            var chatchef_image_target = this.create_element("div", "chatchef-image-target", "responseimg_".concat(item.imagename)); // nosemgrep
+            var target_close = this.create_element("div", "target-close");
+            var target_img = this.create_element("img", ["fa", "fa-times"]);
+            target_img.src = "/chatchef/static/images/chatchef-bot/bot_avatar_close.png";
+            target_img.setAttribute("aria-hidden", "true");
+            this.append_child(target_close, target_img);
+            var overflow_img = this.create_element("img", null, null);
+            overflow_img.src = item.imagepath;
+            this.append_child(chatchef_image_target, target_close);
+            this.append_child(chatchef_image_target, overflow_img);
+
+            // var span = this.create_element("span");
+            var span = this.create_element("span", "date-time-span");
+            var span_text = this.create_text_node(formated_date_time);
+            this.append_child(span, span_text);
+            this.append_child(user_text, p);
+            this.append_child(user_text, a);
+            this.append_child(user_text, chatchef_image_target);
+            this.append_child(user_text, span);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+            // eslint-disable-next-line no-unused-vars
+            $("#thumbnail_img_" + this.reply_div_id + "").click(function () {
+                var x = $(this).parent().children();
+                console.log("clicked img right", x);
+                console.log("item : - ", item);
+                x.css("display", "block");
+            });
+            // eslint-disable-next-line no-unused-vars
+            $(".target-close").click(function () {
+                $(".chatchef-image-target").css("display", "none");
+            });
+        },
+        // eslint-disable-next-line no-unused-vars
+        show_video_reply: function (item, view_type, query_id) {
+            console.log("show_video_reply");
+            this.reply_div_id++;
+            console.log("query id: - ", query_id);
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+            var user_avatar = this.create_element("img", ["ui-chatchef-avatar", "chatchef-avatar"]);
+            if (view_type !== "with_icon") {
+                user_avatar.className += " invisible";
+            }
+            user_avatar.src = this.avatar_path;
+            var user_text = this.create_element("div", "chatchef-text");
+            var p = this.create_element("p");
+            var p_text = this.create_text_node(item.response);
+            this.append_child(p, p_text);
+            var i = this.create_element("i", ["fa", "fa-play-circle"], "thumbnail_icon");
+            i.setAttribute("aria-hidden", "true");
+            var div = this.create_element("div", "chatchef-video", "thumbnail_".concat(this.reply_div_id)); // nosemgrep
+            var video = this.create_element("video", null, "target_video");
+            var source = this.create_element("source");
+            source.src = item.videopath.concat("#t=2"); // nosemgrep
+            this.append_child(video, source);
+            this.append_child(div, video);
+            var chatchef_video_target = this.create_element("div", "chatchef-video-target", "responsevideo_".concat(item.videoname)); // nosemgrep
+            var target_close = this.create_element("div", "target-close");
+            var target_img = this.create_element("img", ["fa", "fa-times"]);
+            target_img.src = "/chatchef/static/images/chatchef-bot/bot_avatar_close.png";
+            target_img.setAttribute("aria-hidden", "true");
+            this.append_child(target_close, target_img);
+            var overflow_video = this.create_element("video", null, "target_video");
+            overflow_video.controls = true;
+            overflow_video.setAttribute("height", "90%");
+            overflow_video.setAttribute("width", "100%");
+            var overflow_src = this.create_element("source", null, null);
+            overflow_src.src = item.videopath;
+            this.append_child(overflow_video, overflow_src);
+            this.append_child(chatchef_video_target, target_close);
+            this.append_child(chatchef_video_target, overflow_video);
+            // var span = this.create_element("span");
+            var span = this.create_element("span", "date-time-span");
+            var span_text = this.create_text_node(formated_date_time);
+            this.append_child(span, span_text);
+            this.append_child(user_text, p);
+            this.append_child(user_text, i);
+            this.append_child(user_text, div);
+            this.append_child(user_text, chatchef_video_target);
+            this.append_child(user_text, span);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+
+            console.log(reply_html);
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+
+            document.querySelector("#thumbnail_" + this.reply_div_id + "").addEventListener("click", function () {
+                var x = this.parentNode;
+                x.querySelector(".chatchef-video-target").style.display = "block";
+                document.querySelector("#thumbnail_icon").style.display = "none";
+            });
+            var all_target_close = document.querySelectorAll(".target-close");
+            for (let all_target_close_ of all_target_close) {
+                if (all_target_close_.parentElement.className.includes("chatchef-video-target")) {
+                    all_target_close_.addEventListener("click", function () {
+                        var all_chatchef_video_target = document.querySelectorAll(".chatchef-video-target");
+                        for (let all_chatchef_video_target_ of all_chatchef_video_target) {
+                            all_chatchef_video_target_.style.display = "none";
+                        }
+                        var trgt = document.querySelectorAll("#target_video");
+                        for (let trgt_ of trgt) {
+                            trgt_.pause();
+                        }
+                        document.querySelector("#thumbnail_icon").style.display = "block";
+                    });
+                }
+            }
+        },
+        // eslint-disable-next-line no-unused-vars
+        show_card_reply: function (item, view_type, query_id) {
+            console.log("show_card_reply");
+            this.reply_div_id++;
+
+            var reply_html = this.create_element("div", "chat-input", "reply_div_".concat(this.reply_div_id)); // nosemgrep
+
+            var user_avatar = this.create_element("img", ["ui-chatchef-avatar", "chatchef-avatar"]);
+            if (view_type !== "with_icon") {
+                user_avatar.className += " invisible";
+            }
+            user_avatar.src = this.avatar_path;
+            var user_text = this.create_element("div", ["card", "shadow", "mb-5", "bg-white", "rounded", "width-15-rem"]);
+            user_text.style.width = "15rem";
+            var img = this.create_element("img", "card-img-top");
+            img.src = item.imageurl;
+            img.alt = "Card image cap";
+            var card_body = this.create_element("div", "card-body");
+            var card_title = this.create_element("h5", "card-title");
+            var card_title_text = this.create_text_node(item.title);
+            this.append_child(card_title, card_title_text);
+            var card_subtitle = this.create_element("h5", ["card-subtitle", "mb-2", "text-muted"]);
+            var card_subtitle_text = this.create_text_node(item.subtitle);
+            this.append_child(card_subtitle, card_subtitle_text);
+            var card_text = this.create_element("p", "card-text");
+            var card_text_value = this.create_text_node(item.description);
+            this.append_child(card_text, card_text_value);
+            var card_body_link = this.create_element("div", "card-body-link");
+            var card_link = this.create_element("a", "card-link");
+            card_link.href = item.btnurl;
+            var card_link_text = this.create_text_node(item.btnname);
+            this.append_child(card_link, card_link_text);
+            this.append_child(card_body_link, card_link);
+            this.append_child(card_body, card_title);
+            this.append_child(card_body, card_subtitle);
+            this.append_child(card_body, card_text);
+            this.append_child(card_body, card_body_link);
+            this.append_child(user_text, img);
+            this.append_child(user_text, card_body);
+            this.append_child(reply_html, user_avatar);
+            this.append_child(reply_html, user_text);
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        show_option_sentiments: function (reply, query_id, view_type) {
+            console.log("show_option_sentiments");
+            this.reply_div_id++;
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+
+            this.hide_loader();
+            var sentiments_vals = reply["sentiment_data"];
+            var reply_html = "";
+
+            if (view_type == "with_icon") {
+                reply_html = document.createElement("div");
+                reply_html.setAttribute("id", "reply_div_" + this.reply_div_id);
+                reply_html.setAttribute("class", "chat-input");
+
+                var avatar_div = document.createElement("div");
+                avatar_div.setAttribute("class", "ui-chatchef-avatar chatchef-avatar");
+                avatar_div.style.backgroundImage = "url(" + this.avatar_path + ")";
+                reply_html.appendChild(avatar_div);
+
+                var text_div = document.createElement("div");
+                text_div.setAttribute("class", "chatchef-text");
+                reply_html.appendChild(text_div);
+                var text_p = document.createElement("p");
+                var reply_response = document.createTextNode(reply.response);
+                text_p.appendChild(reply_response);
+                text_div.appendChild(text_p);
+
+                var chat_timestamp = document.createElement("span");
+                chat_timestamp.setAttribute("class", "date-time-span");
+                chat_timestamp.innerText = formated_date_time;
+                text_div.appendChild(chat_timestamp);
+            } else {
+                reply_html = document.createElement("div");
+                reply_html.setAttribute("id", "reply_div_" + this.reply_div_id);
+                reply_html.setAttribute("class", "chat-input");
+
+                avatar_div = document.createElement("div");
+                avatar_div.setAttribute("class", "ui-chatchef-avatar chatchef-avatar");
+                avatar_div.style.visibility = "hidden";
+                reply_html.appendChild(avatar_div);
+
+                text_div = document.createElement("div");
+                text_div.setAttribute("class", "chatchef-text");
+                reply_html.appendChild(text_div);
+                text_p = document.createElement("p");
+                reply_response = document.createTextNode(reply.response);
+                text_p.appendChild(reply_response);
+                text_div.appendChild(text_p);
+
+                chat_timestamp = document.createElement("span");
+                chat_timestamp.setAttribute("class", "date-time-span");
+                chat_timestamp.innerText = formated_date_time;
+                text_div.appendChild(chat_timestamp);
+            }
+
+            var option_div = document.createElement("div");
+            option_div.setAttribute("id", "open_close_intent");
+            reply_html.appendChild(option_div);
+
+            for (var key in sentiments_vals) {
+                var sentiment_btn = document.createElement("button");
+                sentiment_btn.setAttribute("class", "sentiment-button");
+                sentiment_btn.setAttribute("data-status", key);
+                sentiment_btn.setAttribute("id", key);
+                sentiment_btn.setAttribute("value", key);
+
+                var sentiment_image = document.createElement("img");
+                sentiment_image.setAttribute("class", "sentiment-icon-chat");
+                sentiment_image.src = "/chatchef/static/images/sentiments/" + key + ".png";
+                sentiment_btn.appendChild(sentiment_image);
+
+                option_div.appendChild(sentiment_btn);
+            }
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        show_feedback_sentiments: function (reply, query_id, view_type) {
+            console.log("show_feedback_sentiments");
+            this.reply_div_id++;
+            var current_date = new Date();
+            var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+
+            this.hide_loader();
+            var sentiments_vals = reply["feedback_data"];
+            var reply_html = "";
+
+            if (view_type == "with_icon") {
+                reply_html = document.createElement("div");
+                reply_html.setAttribute("id", "reply_div_" + this.reply_div_id);
+                reply_html.setAttribute("class", "chat-input");
+
+                var avatar_div = document.createElement("div");
+                avatar_div.setAttribute("class", "ui-chatchef-avatar chatchef-avatar");
+                avatar_div.style.backgroundImage = "url(" + this.avatar_path + ")";
+                reply_html.appendChild(avatar_div);
+
+                var text_div = document.createElement("div");
+                text_div.setAttribute("class", "chatchef-text");
+                reply_html.appendChild(text_div);
+                var text_p = document.createElement("p");
+                var reply_response = document.createTextNode(reply.response);
+                text_p.appendChild(reply_response);
+                text_div.appendChild(text_p);
+
+                var chat_timestamp = document.createElement("span");
+                chat_timestamp.setAttribute("class", "date-time-span");
+                chat_timestamp.innerText = formated_date_time;
+                text_div.appendChild(chat_timestamp);
+            } else {
+                reply_html = document.createElement("div");
+                reply_html.setAttribute("id", "reply_div_" + this.reply_div_id);
+                reply_html.setAttribute("class", "chat-input");
+
+                avatar_div = document.createElement("div");
+                avatar_div.setAttribute("class", "ui-chatchef-avatar chatchef-avatar");
+                avatar_div.style.visibility = "hidden";
+                reply_html.appendChild(avatar_div);
+
+                text_div = document.createElement("div");
+                text_div.setAttribute("class", "chatchef-text");
+                reply_html.appendChild(text_div);
+                text_p = document.createElement("p");
+                reply_response = document.createTextNode(reply.response);
+                text_p.appendChild(reply_response);
+                text_div.appendChild(text_p);
+
+                chat_timestamp = document.createElement("span");
+                chat_timestamp.setAttribute("class", "date-time-span");
+                chat_timestamp.innerText = formated_date_time;
+                text_div.appendChild(chat_timestamp);
+            }
+            var option_div = document.createElement("div");
+            option_div.setAttribute("id", "open_close_intent");
+            reply_html.appendChild(option_div);
+
+            for (var key in sentiments_vals) {
+                var sentiment_btn = document.createElement("button");
+                sentiment_btn.setAttribute("class", "sentiment_feedback_button");
+                sentiment_btn.setAttribute("data-toggle", "tooltip");
+                sentiment_btn.setAttribute("title", key);
+                sentiment_btn.setAttribute("data-status", key);
+                sentiment_btn.setAttribute("id", key);
+                sentiment_btn.setAttribute("value", key);
+
+                var sentiment_image = document.createElement("img");
+                sentiment_image.setAttribute("class", "sentiment-icon-chat");
+                sentiment_image.src = "/chatchef/static/images/sentiments/" + key + ".png";
+                sentiment_btn.appendChild(sentiment_image);
+
+                option_div.appendChild(sentiment_btn);
+            }
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        ask_for_help: function (item, query_id) {
+            console.log("ask_for_help");
+            this.reply_div_id++;
+            this.hide_loader();
+
+            var reply_html = document.createElement("div");
+            reply_html.setAttribute("id", "reply_div_" + this.reply_div_id);
+            reply_html.setAttribute("class", "chat-input");
+
+            var avatar_div = document.createElement("div");
+            avatar_div.setAttribute("class", "ui-chatchef-avatar chatchef-avatar");
+            avatar_div.style.backgroundImage = "url(" + this.avatar_path + ")";
+            reply_html.appendChild(avatar_div);
+
+            var text_div = document.createElement("div");
+            text_div.setAttribute("class", "chatchef-text");
+            var reply_div = document.createElement("div");
+            reply_div.style.fontSize = "13px";
+            reply_div.innerText = item.response;
+            text_div.appendChild(reply_div);
+            reply_html.appendChild(text_div);
+
+            var center = document.createElement("div");
+            center.setAttribute("class", "confirm_intent_div");
+            center.style.textAlign = "center";
+            var yes_btn = document.createElement("button");
+            yes_btn.style.marginRight = "10px";
+            yes_btn.setAttribute("type", "button");
+            yes_btn.setAttribute("class", "confirm_continue_btn bot-btn-success ");
+            yes_btn.setAttribute("data-status", "continue");
+            yes_btn.setAttribute("data-query-id", query_id);
+            yes_btn.innerText = "Yes";
+
+            var no_btn = document.createElement("button");
+            no_btn.style.marginRight = "10px";
+            no_btn.setAttribute("type", "button");
+            no_btn.setAttribute("class", "confirm_continue_btn bot-btn-danger");
+            no_btn.setAttribute("data-status", "exit");
+            no_btn.setAttribute("data-query-id", query_id);
+            no_btn.innerText = "No";
+
+            center.appendChild(yes_btn);
+            center.appendChild(no_btn);
+            text_div.appendChild(center);
+
+            var rating_div = document.createElement("div");
+            rating_div.setAttribute("class", "rating_container");
+            var icon_like = document.createElement("i");
+            icon_like.setAttribute("class", "fa fa-thumbs-o-up user_rating_btn");
+            icon_like.setAttribute("data-rating", "LIKE");
+            icon_like.setAttribute("data-query-id", query_id);
+            icon_like.setAttribute("aria-hidden", true);
+
+            var icon_dislike = document.createElement("i");
+            icon_dislike.setAttribute("class", "fa fa-thumbs-o-down user_rating_btn");
+            icon_dislike.setAttribute("data-rating", "DISLIKE");
+            icon_dislike.setAttribute("data-query-id", query_id);
+            icon_dislike.setAttribute("aria-hidden", true);
+
+            rating_div.appendChild(icon_like);
+            rating_div.appendChild(icon_dislike);
+            reply_html.appendChild(rating_div);
+
+            var $reply_div = $(reply_html).hide(); // nosemgrep
+            $reply_div.insertBefore(this.loader);
+            $reply_div.fadeIn("slow");
+            this.scroll_chat_to_bottom();
+        },
+        save_user_emotion: function (sentiment, intent_type) {
+            var that = this;
+            this.is_dev && console.log("saving user sentiment/emotion");
+            that.enable_input();
+
+            $.ajax({
+                url: that.base_url + "/record/sentiment/",
+                type: "POST",
+                contentType: "application/json; charset=utf-8",
+                dataType: "json",
+                data: JSON.stringify({
+                    session_id: that.session_id,
+                    sentiment: sentiment,
+                    botid: that.bot_id,
+                    query_id: that.query_id,
+                    intent_type: intent_type,
+                    user_name: that.user_name,
+                }),
+                success: function (data) {
+                    console.log("Response:", data);
+                    console.log("Sentiment saved sucessfully.");
+                },
+                error: function (data) {
+                    that.hide_loader();
+                    if (data.status == 401) {
+                        console.log("Response:", data);
+                    }
+                },
+            });
+        },
+        language_based_greet: function () {
+            let mrng_greet = "Good Morning";
+            let noon_greet = "Good Afternoon";
+            let evng_greet = "Good Evening";
+            if (this.bot_language == "French") {
+                mrng_greet = "Bonjour";
+                noon_greet = "Bonne après-midi";
+                evng_greet = "Bonsoir";
+            }
+            return [mrng_greet, noon_greet, evng_greet];
+        },
+    };
+
+    // $(document).ready(function () {
+    //     var url = window.location.href;
+    //     var bot_id = "";
+    //     var cdo_bot_name = url.split("/")[3];
+    //     if (cdo_bot_name == "arya-new") {
+    //         bot_id = '3099301699-3015455592';
+    //     } else if (cdo_bot_name == "hana-new") {
+    //         bot_id = '3099301699-3015455592';
+    //     }
+    //     // if (url.search("cdo-amit-poc")) {
+    //     //     bot_id = url.split("/")[4];
+    //     // }
+    //     // else if (url.search("easdto.in") != -1) {
+    //     //     bot_id = url.split("/")[6];
+    //     // } else if (url.search("dtogarage") != -1) {
+    //     //     bot_id = url.split("/")[7];
+    //     // } else {
+    //     //     bot_id = url.split("/")[4]; // change [4] to [6] as it is in Codebase
+    //     // }
+    //     console.info("loading bot with id: " + bot_id);
+    //     chat_bot.init(bot_id);
+    // });
+    window.ChatChef = ChatChef;
+})(this);
+
+/**
+ * JavaScript Client Detection
+ * (C) viazenetti GmbH (Christian Ludwig)
+ */
+(function (window) {
+    {
+        var unknown = "-";
+
+        // browser
+        var n_ver = navigator.appVersion;
+        var n_agt = navigator.userAgent;
+        var browser = navigator.appName;
+        var version = "" + parseFloat(navigator.appVersion);
+        var major_version = parseInt(navigator.appVersion, 10);
+        var name_offset, ver_offset, ix;
+
+        // Opera
+        if ((ver_offset = n_agt.indexOf("Opera")) != -1) {
+            browser = "Opera";
+            version = n_agt.substring(ver_offset + 6);
+            if ((ver_offset = n_agt.indexOf("Version")) != -1) {
+                version = n_agt.substring(ver_offset + 8);
+            }
+        }
+        // Opera Next
+        if ((ver_offset = n_agt.indexOf("OPR")) != -1) {
+            browser = "Opera";
+            version = n_agt.substring(ver_offset + 4);
+        }
+        // Edge
+        else if ((ver_offset = n_agt.indexOf("Edge")) != -1) {
+            browser = "Microsoft Edge";
+            version = n_agt.substring(ver_offset + 5);
+        }
+        // MSIE
+        else if ((ver_offset = n_agt.indexOf("MSIE")) != -1) {
+            browser = "Microsoft Internet Explorer";
+            version = n_agt.substring(ver_offset + 5);
+        }
+        // Chrome
+        else if ((ver_offset = n_agt.indexOf("Chrome")) != -1) {
+            browser = "Chrome";
+            version = n_agt.substring(ver_offset + 7);
+        }
+        // Safari
+        else if ((ver_offset = n_agt.indexOf("Safari")) != -1) {
+            browser = "Safari";
+            version = n_agt.substring(ver_offset + 7);
+            if ((ver_offset = n_agt.indexOf("Version")) != -1) {
+                version = n_agt.substring(ver_offset + 8);
+            }
+        }
+        // Firefox
+        else if ((ver_offset = n_agt.indexOf("Firefox")) != -1) {
+            browser = "Firefox";
+            version = n_agt.substring(ver_offset + 8);
+        }
+        // MSIE 11+
+        else if (n_agt.indexOf("Trident/") != -1) {
+            browser = "Microsoft Internet Explorer";
+            version = n_agt.substring(n_agt.indexOf("rv:") + 3);
+        }
+        // Other browsers
+        else if ((name_offset = n_agt.lastIndexOf(" ") + 1) < (ver_offset = n_agt.lastIndexOf("/"))) {
+            browser = n_agt.substring(name_offset, ver_offset);
+            version = n_agt.substring(ver_offset + 1);
+            if (browser.toLowerCase() == browser.toUpperCase()) {
+                browser = navigator.appName;
+            }
+        }
+        // trim the version string
+        if ((ix = version.indexOf(";")) != -1) version = version.substring(0, ix);
+        if ((ix = version.indexOf(" ")) != -1) version = version.substring(0, ix);
+        if ((ix = version.indexOf(")")) != -1) version = version.substring(0, ix);
+
+        major_version = parseInt("" + version, 10);
+        if (isNaN(major_version)) {
+            version = "" + parseFloat(navigator.appVersion);
+            major_version = parseInt(navigator.appVersion, 10);
+        }
+
+        // mobile version
+        var mobile = /Mobile|mini|Fennec|Android|iP(ad|od|hone)/.test(n_ver);
+
+        // cookie
+
+        // system
+        var os = unknown;
+        var client_strings = [
+            {s: "Windows 10", r: /(Windows 10.0|Windows NT 10.0)/},
+            {s: "Windows 8.1", r: /(Windows 8.1|Windows NT 6.3)/},
+            {s: "Windows 8", r: /(Windows 8|Windows NT 6.2)/},
+            {s: "Windows 7", r: /(Windows 7|Windows NT 6.1)/},
+            {s: "Windows Vista", r: /Windows NT 6.0/},
+            {s: "Windows Server 2003", r: /Windows NT 5.2/},
+            {s: "Windows XP", r: /(Windows NT 5.1|Windows XP)/},
+            {s: "Windows 2000", r: /(Windows NT 5.0|Windows 2000)/},
+            {s: "Windows ME", r: /(Win 9x 4.90|Windows ME)/},
+            {s: "Windows 98", r: /(Windows 98|Win98)/},
+            {s: "Windows 95", r: /(Windows 95|Win95|Windows_95)/},
+            {s: "Windows NT 4.0", r: /(Windows NT 4.0|WinNT4.0|WinNT|Windows NT)/},
+            {s: "Windows CE", r: /Windows CE/},
+            {s: "Windows 3.11", r: /Win16/},
+            {s: "Android", r: /Android/},
+            {s: "Open BSD", r: /OpenBSD/},
+            {s: "Sun OS", r: /SunOS/},
+            {s: "Linux", r: /(Linux|X11)/},
+            {s: "iOS", r: /(iPhone|iPad|iPod)/},
+            {s: "Mac OS X", r: /Mac OS X/},
+            {s: "Mac OS", r: /(MacPPC|MacIntel|Mac_PowerPC|Macintosh)/},
+            {s: "QNX", r: /QNX/},
+            {s: "UNIX", r: /UNIX/},
+            {s: "BeOS", r: /BeOS/},
+            {s: "OS/2", r: /OS\/2/},
+            {s: "Search Bot", r: /(nuhk|Googlebot|Yammybot|Openbot|Slurp|MSNBot|Ask Jeeves\/Teoma|ia_archiver)/},
+        ];
+        for (var id in client_strings) {
+            var cs = client_strings[id];
+            if (cs.r.test(n_agt)) {
+                os = cs.s;
+                break;
+            }
+        }
+
+        var os_version = unknown;
+
+        if (/Windows/.test(os)) {
+            os_version = /Windows (.*)/.exec(os)[1];
+            os = "Windows";
+        }
+
+        switch (os) {
+            case "Mac OS X":
+                // eslint-disable-next-line no-useless-escape
+                os_version = /Mac OS X (10[\.\_\d]+)/.exec(n_agt)[1];
+                break;
+
+            case "Android":
+                // eslint-disable-next-line no-useless-escape
+                os_version = /Android ([\.\_\d]+)/.exec(n_agt)[1];
+                break;
+
+            case "iOS":
+                var ios_version = /OS (\d+)_(\d+)_?(\d+)?/.exec(n_ver);
+                os_version = ios_version[1] + "." + ios_version[2] + "." + (ios_version[3] | 0);
+                break;
+        }
+    }
+
+    window.jscd = {
+        browser: browser,
+        browser_version: version,
+        browser_major_version: major_version,
+        mobile: mobile,
+        os: os,
+        os_version: os_version,
+    };
+})(this);
+
+// © Cognizant Conversational AI practice
+// 05c384016991e2442abc24a6ba9075255fc1a04e9b4e6eff1250b2c6aace1546

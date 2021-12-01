@@ -1,0 +1,251 @@
+// eslint-disable-next-line no-unused-vars
+var helper = {
+    master_url: function () {
+        var _url = document.location.origin; // used for all communications
+        if (_url.search("cognizant") != -1) {
+            _url = "https://cdodfprod.cognizant.com/chatchef";
+        }
+        return _url;
+    },
+    chatbot_url: function () {
+        var _url = document.location.origin + "/chatbot"; // nosemgrep
+
+        if (_url.search("cognizant") != -1) {
+            _url = "https://cdodfprod.cognizant.com/chatchef/chatbot";
+        }
+        return _url;
+    },
+    max_bot_count: function () {
+        // maximum number of bots user can create
+        return 5;
+    },
+    logger: function () {
+        var old_console_log = null;
+        var pub = {};
+        pub.enable_logger = function enable_logger() {
+            if (old_console_log == null) return;
+            window["console"]["log"] = old_console_log;
+        };
+
+        pub.disable_logger = function disable_logger() {
+            old_console_log = console.log;
+            window["console"]["log"] = function () {};
+        };
+        return pub;
+    },
+    show_toast: function (title, descrption, toast_type) {
+        if (toast_type === undefined) {
+            toast_type = "info";
+        }
+        console.log("Showing show_toast");
+        var toast = document.getElementsByClassName("toast-header-text");
+        toast[0].innerText = title;
+        var toast_body = document.getElementsByClassName("toast-body");
+        toast_body[0].innerText = descrption;
+        if (toast_type == "info") {
+            $(".toast-header-text").addClass("confirmed");
+            $(".toast-header-text").removeClass("rejected");
+        } else {
+            $(".toast-header-text").removeClass("confirmed");
+            $(".toast-header-text").addClass("rejected");
+        }
+
+        $(".toast").toast("show");
+    },
+    is_image: function (filename) {
+        var parts = filename.split(".");
+        var ext = parts[parts.length - 1];
+        switch (ext.toLowerCase()) {
+            case "jpg":
+            case "gif":
+            case "bmp":
+            case "png":
+            case "jpeg":
+                //etc
+                return true;
+        }
+        return false;
+    },
+    is_file: function (filename) {
+        var parts = filename.split(".");
+        var ext = parts[parts.length - 1];
+        switch (ext.toLowerCase()) {
+            case "txt":
+            case "xlsx":
+            case "jpg":
+            case "gif":
+            case "bmp":
+            case "png":
+            case "jpeg":
+                //etc
+                return true;
+        }
+        return false;
+    },
+    is_document: function (filename) {
+        var parts = filename.split(".");
+        var ext = parts[parts.length - 1];
+        switch (ext.toLowerCase()) {
+            case "csv":
+            case "xlsx":
+                //etc
+                return true;
+        }
+        return false;
+    },
+    validate_url: function (url) {
+        // eslint-disable-next-line no-useless-escape
+        // eslint-disable-next-line max-len
+        return /^(https?|s?ftp):\/\/(((([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(%[\da-f]{2})|[!\$&'\(\)\*\+,;=]|:)*@)?(((\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])\.(\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])\.(\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5])\.(\d|[1-9]\d|1\d\d|2[0-4]\d|25[0-5]))|((([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|\d|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.)+(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])*([a-z]|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])))\.?)(:\d*)?)(\/((([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(%[\da-f]{2})|[!\$&'\(\)\*\+,;=]|:|@)+(\/(([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(%[\da-f]{2})|[!\$&'\(\)\*\+,;=]|:|@)*)*)?)?(\?((([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(%[\da-f]{2})|[!\$&'\(\)\*\+,;=]|:|@)|[\uE000-\uF8FF]|\/|\?)*)?(#((([a-z]|\d|-|\.|_|~|[\u00A0-\uD7FF\uF900-\uFDCF\uFDF0-\uFFEF])|(%[\da-f]{2})|[!\$&'\(\)\*\+,;=]|:|@)|\/|\?)*)?$/i.test(
+            url
+        );
+    },
+    validate_email: function (email) {
+        // eslint-disable-next-line no-useless-escape
+        var re = /^(([^<>()\[\]\\.,;:\s@"]+(\.[^<>()\[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+        return re.test(String(email).toLowerCase());
+    },
+    hide_loader: function () {
+        console.log("Hiding Loader");
+        $(".chat-chef-loader").css("display", "none");
+        this.loader_progress("");
+    },
+    show_loader: function () {
+        console.log("Showing Loader");
+        $(".chat-chef-loader").css("display", "block");
+    },
+    loader_progress: function (text) {
+        $(".loader-info").text(text);
+    },
+    convert_text_to_bool: function (text) {
+        var flag = false;
+        if (text == "True") {
+            flag = true;
+        }
+        return flag;
+    },
+    get_current_location_lite: function () {
+        var location = {
+            "latitude": 0,
+            "longitude": 0,
+            "country": "-",
+            "state": "-",
+        };
+
+        console.log("fetching user location");
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.onreadystatechange = function () {
+                if (this.readyState === 4) {
+                    if (this.status >= 200 && this.status < 400) {
+                        if (this.response) {
+                            var response = JSON.parse(this.response);
+                            location["country"] = response["country_name"];
+                            location["latitude"] = response["latitude"];
+                            location["longitude"] = response["longitude"];
+                            location["state"] = response["state"];
+                        } else {
+                            var response_text = JSON.parse(this.responseText);
+                            location["country"] = response_text["country_name"];
+                            location["latitude"] = response_text["latitude"];
+                            location["longitude"] = response_text["longitude"];
+                            location["state"] = response_text["state"];
+                        }
+                    }
+                }
+            };
+            xhr.open("GET", "https://geolocation-db.com/json/");
+            xhr.setRequestHeader("Content-Type", "application/json");
+
+            xhr.send();
+            return location;
+        } catch (e) {
+            console.log(e);
+        }
+    },
+    get_current_location: function () {
+        console.log("fetching user's location");
+        var location = {
+            "latitude": 0,
+            "longitude": 0,
+            "country": "-",
+            "state": "-",
+        };
+
+        $.ajax({
+            url: "https://geolocation-db.com/json/",
+            async: false,
+            dataType: "json",
+            xhrFields: {
+                withCredentials: false,
+            },
+            beforeSend: function () {
+                // overriding default xhr behaviour to disable csrf token
+            },
+            success: function (data) {
+                location["country"] = data["country_name"];
+                location["latitude"] = data["latitude"];
+                location["longitude"] = data["longitude"];
+                location["state"] = data["state"];
+            },
+        });
+        return location;
+    },
+    is_video: function (filename) {
+        var parts = filename.split(".");
+        var ext = parts[parts.length - 1];
+        switch (ext.toLowerCase()) {
+            case "m4v":
+            case "avi":
+            case "mpg":
+            case "mp4":
+                //etc
+                return true;
+        }
+        return false;
+    },
+    sanitize_html: function (text) {
+        console.log("sanitizing user text");
+        var re = /<script[\s\S]*?>[\s\S]*?<\/script>/gi;
+        var tags_mapping = {
+            // for preventing xss attacks
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+            "/": "&#2F;",
+            "`": "&#60;",
+            "=": "&#3D;",
+        };
+        if (text == "" || text == " " || text == null) {
+            console.log("inside empty text check");
+            return text;
+        } else if (text.match(re) || text.includes("&lt;script")) {
+            return text.replace(/[&<>"']/g, function (e) {
+                return tags_mapping[e];
+            });
+        } else {
+            return text;
+        }
+    },
+};
+
+// for controlling the logging in PROD and DEV environments
+// eslint-disable-next-line no-unused-vars
+var logger = (function () {
+    var old_console_log = null;
+    var pub = {};
+
+    pub.enable_logger = function enable_logger() {
+        if (old_console_log == null) return;
+        window["console"]["log"] = old_console_log;
+    };
+
+    pub.disable_logger = function disable_logger() {
+        old_console_log = console.log;
+        window["console"]["log"] = function () {};
+    };
+
+    return pub;
+})();

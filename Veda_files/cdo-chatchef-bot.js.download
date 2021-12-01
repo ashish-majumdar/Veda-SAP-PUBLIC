@@ -1,0 +1,63 @@
+$(document).ready(function () {
+    ChatChef.handle_recomm = function(text) {
+        this.input_chip_read = this.intent_utterance[text].toString();
+        this.send_message_to_server();
+    }
+
+    $(document).on("click", ".recommend-btn", function () {
+        var text = $(this).text();
+        ChatChef.handle_recomm(text);
+    });
+
+
+    ChatChef.show_recommended_intents = function (reply, view_type, title) {
+        console.log("Recommended Intents", title);
+        this.reply_div_id++;
+        var current_date = new Date();
+        var formated_date_time = current_date.toDateString().substring(0, 10) + ", " + current_date.getHours() + ":" + current_date.getMinutes() + ":" + current_date.getSeconds();
+        if(reply){
+            var intents = Object.keys(reply);
+            var reply_html = this.create_element("div", "chat-input", "reply_div_" + this.reply_div_id);
+            var sug_div = this.create_element("div", "suggestion-txt");
+            var sug_text = this.create_text_node("Suggestions: ");
+            this.append_child(sug_div, sug_text);
+            var intent_rec_div = this.create_element("div", "intent-rec");
+            intent_rec_div.style.cssText = "margin-right: 10px !important;";
+
+            for (let intent_ of intents) {
+                var button = this.create_element("button", ["btn", "recommend-btn"]);
+                button.style.cssText = "margin-right: 10px;";
+                var button_text = this.create_text_node(intent_);
+                this.append_child(button, button_text);
+                this.append_child(intent_rec_div, button);
+            }
+            this.append_child(reply_html, sug_div);
+            this.append_child(reply_html, intent_rec_div);
+            var $reply_div = $(reply_html).hide();
+            var intentrec = $('#chatchef-intent-rec');
+            intentrec.html($reply_div);
+            $reply_div.fadeIn("slow");
+            // this.scrollChatToBottom();
+        }
+    };
+    let original_append_body = ChatChef.append_bot_body;
+    ChatChef.append_bot_body = function(callback) {
+        $.proxy(original_append_body, this, $.proxy(custom_footer,this, callback))();
+        
+    };
+    custom_footer = function(callback) {
+        var intent_div = document.createElement("div");
+        intent_div.setAttribute("id", "chatchef-intent-rec");
+        var sug_div = document.createElement("div");
+        sug_div.setAttribute("class", "intent-rec-sug");
+        sug_div.innerText = "Suggestions: "
+        this.append_child(intent_div, sug_div);
+        var rec_div = document.createElement("div");
+        rec_div.setAttribute("class", "intent-rec");
+        rec_div.style.cssText = "margin-right:10px;";
+        this.append_child(intent_div, rec_div);
+        var chat_footer = document.getElementById("chatchef-footer");
+        chat_footer.prepend(intent_div);
+        callback();
+    };
+});

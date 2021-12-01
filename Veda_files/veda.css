@@ -1,0 +1,250 @@
+@font-face {
+    font-family: 'Cognizant Sans';
+    src: url('../fonts/CognizantSans-Regular.otf') format('opentype');
+  }
+  body{
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    width: 100vw;
+    overflow: hidden;
+    font-family: 'Cognizant Sans';
+  }
+  ::-webkit-scrollbar {
+    width: 0;  /* Remove scrollbar space */
+    background: transparent;  /* Optional: just make scrollbar invisible */
+  }
+  
+  #feedback_div {
+    flex: 0.4;
+    border-radius: 22px 0 0 0;
+    background-color: #328DFF;
+    width: 30%;
+    padding: 10px;
+    scroll-behavior: smooth;
+    overflow: auto;
+  }
+  #feedback_div p {
+    font-size: 12px;color: rgb(255,255,255);font-family: Cognizant Sans;margin-left: 10px;
+    margin-bottom: 0;
+  }
+  
+  #feedback_div > span{
+    margin-right: 13px;
+  }
+  
+  #chatWithARya_div {
+    border-radius: 0 22px 0 0;
+    scroll-behavior: smooth;
+    overflow: auto;
+    flex: 0.4;background-color: #328DFF;padding: 10px;
+  }
+  #chatWithARya_div p{
+    font-size: 12px;color: rgb(255,255,255);
+    margin-bottom: 0;
+    
+  }
+  #middle_div {
+    flex: 0.3;
+    margin-top: -20px;
+    border-radius: 22px 22px 0 0;
+    width: 30%;
+    background-color: #093AA9;
+    padding: 10px;
+    scroll-behavior: smooth;
+    overflow: auto;
+  }
+  #middle_div p {
+    font-size: 12px;color: rgb(255,255,255);margin-top: 10px;
+  }
+  #footer_div {
+    right: 0;
+    bottom: 0px;
+    display: flex;
+    left: 0;
+    background-color: #093AA9;
+    margin-bottom: 0px;
+    padding: 10px;
+  }
+  #footer_div p {
+    color: #77A1FF;font-size: 10px;
+  }
+  
+  #chat_btn{
+    position: fixed;
+    right: 5%;
+    bottom: 15%;
+    border-radius: 50%;
+    padding: 0px;
+  }
+  
+  .container{
+    flex: 1;
+  }
+  
+  #logo_row_div{
+    margin-bottom: -3%;
+  }
+
+  #cognizant_logo{
+    background: url(../images/arya/logo-bg.png);
+    background-size: 100% 100%;
+    justify-content: flex-end;
+    display: flex;
+    padding: 20px 0px 20px;
+  }
+  
+  #footer_div > p {
+    margin-top: auto;
+    margin-bottom: auto;
+    margin-left: auto;
+    margin-right: auto
+  }
+
+  #mid_div .arya-name{
+    font-size: 25px !important;
+  }
+  #mid_div .arya-desc{
+    color: #328dff !important;
+  }
+  #mid_div .mt-3{
+    font-size: 14px !important;
+    margin-bottom: 0% !important;
+  }
+  #mid_div #image{
+    width: 100% !important;
+  }
+  #body_div .fixed-bottom .align-items-lg-end{
+    /* margin-left: 22%; */
+    padding: 0px !important;
+    /* margin-right: 5%; */
+    max-width: 918px !important;
+  }
+  
+  @media(min-width:1024px){
+    #chat_btn{
+      position: fixed;
+      right: 8%;
+      bottom: 12%;
+      border-radius: 50%;
+      padding: 0px;
+    }
+  
+    #image{
+      margin-left: -15px;
+    }
+  
+  }
+  
+  @media(max-width:769px){
+    #chat_btn{
+      position: fixed;
+      right: 10%;
+      bottom: 30%;
+      border-radius: 50%;
+      padding: 0px;
+    }
+  
+  }
+  
+  @media(max-width:375px){
+    #cognizant_logo{
+      width:102% !important;
+    }
+  
+    #chat_btn{
+  
+      margin-bottom: -8px
+    }
+  
+    #div_aboveFooter{
+      display: none !important;
+    }
+  
+    #logo_row_div{
+      margin-bottom: auto;
+    }
+  }
+  
+  @media(max-width:425px){
+  
+    #chat_btn{
+      bottom: 10%;
+    }
+  
+    #feedback_div{
+      flex: 0.6;
+    }
+  
+    #middle_div{
+      display: none !important;
+    }
+  }
+  
+  @media(max-width: 414px) and (max-height: 736px){
+    #virtualOdc_Img{
+      width: 85%;
+    }
+    #virtualOdc_Img .ml-4{
+      margin-left: 0.5rem!important;
+    }
+    #cognizant_logo .mr-4{
+      width: 65%;
+    }
+    #arya_div #arya_image {
+      height: 35% !important;
+      margin-top: 97%;
+    }
+    #mid_div{
+      margin-left: -80% !important;
+    }
+    #mid_div #image{
+      margin-top: 3% !important;
+      margin-left: -10% !important;
+      width: 113% !important;
+    }
+    #feedback_div p {
+      font-size: 11px !important;
+    }
+    #chatWithARya_div p {
+      font-size: 11px !important;
+  }
+  }
+  
+  @media(width: 375px) and (height: 812px){
+    #virtualOdc_Img{
+      width: 85%;
+    }
+    #virtualOdc_Img .ml-4{
+      margin-left: 0.5rem!important;
+    }
+    #cognizant_logo .mr-4{
+      width: 65%;
+    }
+    #arya_div #arya_image {
+      height: 35% !important;
+      margin-top: 125% !important;
+    }
+    #mid_div {
+      margin-left: -80% !important;
+      margin-top: 0%;
+    }
+    #mid_div .mt-3{
+      font-size: 17px !important;
+      margin-bottom: 0% !important;
+    }
+    #mid_div #image {
+      margin-top: 5% !important;
+      margin-left: -10% !important;
+      width: 113% !important;
+    }
+    #div_aboveFooter{
+      display: block !important;
+    }
+    #feedback_div{
+      border-radius: 0px 22px 0 0;
+      width: 73%;
+      padding: 3px;
+    }
+  }
+  
